@@ -1,6 +1,6 @@
 /**
  * CineGrade App — Main Application Logic
- * Handles UI, video playback, controls, presets, split view, and export.
+ * Handles UI, video playback, controls, presets, auto-grade, split view, and MP4 export.
  */
 
 (function () {
@@ -8,13 +8,16 @@
 
     // === State ===
     let engine = null;
-    let video = null;
     let isPlaying = false;
     let animFrameId = null;
     let viewMode = 1; // 0=original, 1=graded, 2=split
     let splitPos = 0.5;
     let activePreset = null;
     let exportCancelled = false;
+    let currentFile = null; // Keep reference to uploaded file for MP4 export
+    let analyzer = null;
+    let ffmpegLoaded = false;
+    let ffmpegInstance = null;
 
     // === DOM Elements ===
     const uploadScreen = document.getElementById('upload-screen');
@@ -35,6 +38,7 @@
     const btnExportFrame = document.getElementById('btn-export-frame');
     const btnNewVideo = document.getElementById('btn-new-video');
     const btnCancelExport = document.getElementById('btn-cancel-export');
+    const btnAutoGrade = document.getElementById('btn-auto-grade');
 
     const timelineSlider = document.getElementById('timeline-slider');
     const timeDisplay = document.getElementById('time-display');
@@ -44,10 +48,16 @@
     const exportModal = document.getElementById('export-modal');
     const exportProgress = document.getElementById('export-progress');
     const exportStatus = document.getElementById('export-status');
+    const analysisModal = document.getElementById('analysis-modal');
+    const analysisProgress = document.getElementById('analysis-progress');
+    const analysisStatus = document.getElementById('analysis-status');
+    const autoGradeResult = document.getElementById('auto-grade-result');
+    const autoGradeScene = document.getElementById('auto-grade-scene');
     const logProfileSelect = document.getElementById('log-profile');
 
     // === Initialize ===
     function init() {
+        analyzer = new AutoAnalyzer();
         setupUpload();
         setupPresets();
         setupControls();
@@ -56,6 +66,7 @@
         setupSplitView();
         setupExport();
         setupActions();
+        setupAutoGrade();
     }
 
     // === Upload ===
@@ -87,6 +98,7 @@
     }
 
     function loadVideo(file) {
+        currentFile = file;
         const url = URL.createObjectURL(file);
         videoEl.src = url;
 
@@ -108,14 +120,12 @@
             uploadScreen.classList.add('hidden');
             editorScreen.classList.remove('hidden');
 
-            // Apply default preset (Rec.709)
-            applyPreset(0);
-
-            // Render first frame
+            // Render first frame at position 0 without any grade yet
             videoEl.currentTime = 0;
             videoEl.addEventListener('seeked', function onSeek() {
                 videoEl.removeEventListener('seeked', onSeek);
-                renderFrame();
+                // Auto-analyze immediately
+                runAutoGrade();
             }, { once: true });
 
             // Update timeline
@@ -125,14 +135,70 @@
         videoEl.load();
     }
 
+    // === Auto Grade ===
+    function setupAutoGrade() {
+        btnAutoGrade.addEventListener('click', runAutoGrade);
+    }
+
+    async function runAutoGrade() {
+        if (!engine || !videoEl.duration) return;
+
+        // Pause playback
+        if (isPlaying) togglePlay();
+
+        // Show analysis modal
+        btnAutoGrade.classList.add('analyzing');
+        analysisModal.classList.remove('hidden');
+        analysisProgress.style.width = '0%';
+        analysisStatus.textContent = 'Preparando análisis...';
+
+        try {
+            const optimalParams = await analyzer.analyze(videoEl, (progress, message) => {
+                analysisProgress.style.width = (progress * 100).toFixed(0) + '%';
+                analysisStatus.textContent = message;
+            });
+
+            // Extract scene name before applying
+            const sceneName = optimalParams.sceneName || 'Cinematic Auto';
+            delete optimalParams.sceneName;
+
+            // Apply the computed params
+            // Keep logProfile from current selection
+            optimalParams.logProfile = engine.params.logProfile;
+            Object.assign(engine.params, optimalParams);
+
+            // Update UI
+            syncControlsFromEngine();
+
+            // Deactivate manual preset highlights
+            activePreset = null;
+            document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+
+            // Show result
+            autoGradeResult.classList.remove('hidden');
+            autoGradeScene.textContent = 'Look aplicado: ' + sceneName;
+
+            // Switch to graded view
+            setViewMode(1);
+
+            // Seek back to start and render
+            videoEl.currentTime = 0;
+            await seekTo(0);
+            renderFrame();
+
+        } catch (err) {
+            analysisStatus.textContent = 'Error: ' + err.message;
+            await new Promise(r => setTimeout(r, 2000));
+        }
+
+        // Hide analysis modal
+        analysisModal.classList.add('hidden');
+        btnAutoGrade.classList.remove('analyzing');
+    }
+
     // === Render Loop ===
     function renderFrame() {
         if (!engine || !videoEl.videoWidth) return;
-
-        // Update canvas size to match video wrapper
-        const wrapper = document.querySelector('.video-wrapper');
-        const displayWidth = videoEl.videoWidth;
-        const displayHeight = videoEl.videoHeight;
 
         // Render
         engine.render(videoEl, viewMode, splitPos);
@@ -168,7 +234,6 @@
         btnPlay.addEventListener('click', togglePlay);
 
         videoEl.addEventListener('ended', () => {
-            // Loop
             videoEl.currentTime = 0;
             videoEl.play();
         });
@@ -188,7 +253,6 @@
             else if (wrapper.webkitRequestFullscreen) wrapper.webkitRequestFullscreen();
         });
 
-        // Space bar to play/pause
         document.addEventListener('keydown', (e) => {
             if (e.code === 'Space' && editorScreen && !editorScreen.classList.contains('hidden')) {
                 e.preventDefault();
@@ -266,11 +330,8 @@
             renderFrame();
         });
 
-        document.addEventListener('mouseup', () => {
-            dragging = false;
-        });
+        document.addEventListener('mouseup', () => { dragging = false; });
 
-        // Touch support
         splitLine.addEventListener('touchstart', (e) => {
             dragging = true;
             e.preventDefault();
@@ -286,9 +347,7 @@
             renderFrame();
         });
 
-        document.addEventListener('touchend', () => {
-            dragging = false;
-        });
+        document.addEventListener('touchend', () => { dragging = false; });
     }
 
     // === Presets ===
@@ -308,27 +367,22 @@
         if (!preset || !engine) return;
 
         activePreset = index;
-
-        // Update engine params
         Object.assign(engine.params, preset.params);
-
-        // Update UI controls to reflect preset values
         syncControlsFromEngine();
 
-        // Highlight active preset
         document.querySelectorAll('.preset-btn').forEach((btn, i) => {
             btn.classList.toggle('active', i === index);
         });
 
-        // Ensure we're in graded view
-        if (viewMode === 0) setViewMode(1);
+        // Hide auto-grade result since we're using a manual preset
+        autoGradeResult.classList.add('hidden');
 
+        if (viewMode === 0) setViewMode(1);
         renderFrame();
     }
 
     // === Controls ===
     function setupControls() {
-        // Map control IDs to engine param names
         const controlMap = {
             'ctrl-exposure': 'exposure',
             'ctrl-contrast': 'contrast',
@@ -365,14 +419,12 @@
                 if (engine) engine.params[paramName] = val;
                 if (valueDisplay) valueDisplay.textContent = val.toFixed(2);
 
-                // Deactivate preset highlighting when manually adjusting
                 activePreset = null;
                 document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
 
                 renderFrame();
             });
 
-            // Double-click to reset individual slider
             slider.addEventListener('dblclick', () => {
                 const defaults = engine ? engine.getDefaultParams() : {};
                 const defaultVal = defaults[paramName];
@@ -383,7 +435,6 @@
             });
         });
 
-        // Log profile selector
         logProfileSelect.addEventListener('change', () => {
             if (engine) {
                 engine.params.logProfile = logProfileSelect.value;
@@ -430,46 +481,67 @@
             }
         });
 
-        // Sync log profile
         logProfileSelect.value = p.logProfile || 'apple-log';
     }
 
     // === Actions ===
     function setupActions() {
-        // Reset
         btnReset.addEventListener('click', () => {
             if (!engine) return;
             engine.params = engine.getDefaultParams();
             syncControlsFromEngine();
             activePreset = null;
+            autoGradeResult.classList.add('hidden');
             document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
             renderFrame();
         });
 
-        // New video
         btnNewVideo.addEventListener('click', () => {
-            // Stop playback
             if (isPlaying) togglePlay();
             stopRenderLoop();
 
-            // Reset
             videoEl.src = '';
             engine = null;
+            currentFile = null;
             fileInput.value = '';
+            autoGradeResult.classList.add('hidden');
 
-            // Show upload screen
             editorScreen.classList.add('hidden');
             uploadScreen.classList.remove('hidden');
         });
     }
 
-    // === Export ===
+    // === FFmpeg MP4 Export ===
+
+    async function loadFFmpeg() {
+        if (ffmpegLoaded && ffmpegInstance) return ffmpegInstance;
+
+        exportStatus.textContent = 'Cargando encoder MP4 (primera vez)...';
+
+        const { FFmpeg } = FFmpegWASM;
+        const ffmpeg = new FFmpeg();
+
+        ffmpeg.on('progress', ({ progress }) => {
+            const pct = Math.round(progress * 100);
+            exportProgress.style.width = pct + '%';
+            exportStatus.textContent = `Codificando MP4... ${pct}%`;
+        });
+
+        await ffmpeg.load({
+            coreURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
+            wasmURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm',
+        });
+
+        ffmpegLoaded = true;
+        ffmpegInstance = ffmpeg;
+        return ffmpeg;
+    }
+
     function setupExport() {
         // Export frame as PNG
         btnExportFrame.addEventListener('click', () => {
             if (!engine) return;
 
-            // Make sure we render graded
             const prevMode = viewMode;
             engine.render(videoEl, 1, 0.5);
 
@@ -479,120 +551,166 @@
             link.href = dataUrl;
             link.click();
 
-            // Restore view mode
             if (prevMode !== 1) {
                 engine.render(videoEl, prevMode, splitPos);
             }
         });
 
-        // Export full video
-        btnExport.addEventListener('click', exportVideo);
+        // Export full video as MP4
+        btnExport.addEventListener('click', exportVideoMP4);
         btnCancelExport.addEventListener('click', () => {
             exportCancelled = true;
         });
     }
 
-    async function exportVideo() {
+    async function exportVideoMP4() {
         if (!engine || !videoEl.duration) return;
 
         exportCancelled = false;
         exportModal.classList.remove('hidden');
         exportProgress.style.width = '0%';
-        exportStatus.textContent = 'Preparando exportación...';
+        exportStatus.textContent = 'Preparando exportación MP4...';
 
-        // Use MediaRecorder + Canvas captureStream for export
-        const fps = 30;
-        const duration = videoEl.duration;
-
-        // We'll re-render the video frame by frame onto the canvas with grading applied,
-        // and capture it with MediaRecorder.
-
-        // Pause current playback
-        const wasPlaying = isPlaying;
         if (isPlaying) togglePlay();
 
+        const fps = 30;
+        const duration = videoEl.duration;
+        const totalFrames = Math.ceil(duration * fps);
+        const frameInterval = 1 / fps;
+        const width = videoEl.videoWidth;
+        const height = videoEl.videoHeight;
+
         try {
-            // Setup MediaRecorder on canvas stream
-            const stream = canvasEl.captureStream(fps);
-            const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-                ? 'video/webm;codecs=vp9'
-                : 'video/webm';
+            // Step 1: Render all graded frames as PNGs into a WebM intermediary
+            exportStatus.textContent = 'Renderizando frames gradeados...';
 
-            const recorder = new MediaRecorder(stream, {
-                mimeType: mimeType,
-                videoBitsPerSecond: 20000000, // 20 Mbps high quality
-            });
+            // Use a temporary canvas to read pixels
+            const readCanvas = document.createElement('canvas');
+            readCanvas.width = width;
+            readCanvas.height = height;
+            const readCtx = readCanvas.getContext('2d');
 
-            const chunks = [];
-            recorder.ondataavailable = (e) => {
-                if (e.data.size > 0) chunks.push(e.data);
-            };
-
-            recorder.start();
-
-            // Seek through video and render each frame
-            const frameInterval = 1 / fps;
-            const totalFrames = Math.ceil(duration * fps);
+            // Collect frames as blobs for FFmpeg
+            const frameBlobs = [];
 
             for (let i = 0; i <= totalFrames; i++) {
                 if (exportCancelled) break;
 
                 const time = Math.min(i * frameInterval, duration);
-
-                // Seek video to this time
                 await seekTo(time);
 
-                // Render graded frame
+                // Render graded frame on the WebGL canvas
                 engine.render(videoEl, 1, 0.5);
 
-                // Update progress
-                const progress = ((i / totalFrames) * 100).toFixed(1);
+                // Read from WebGL canvas to 2D canvas
+                readCtx.drawImage(canvasEl, 0, 0);
+
+                // Get as blob (JPEG for speed, high quality)
+                const blob = await new Promise(resolve => {
+                    readCanvas.toBlob(resolve, 'image/jpeg', 0.95);
+                });
+
+                frameBlobs.push(blob);
+
+                const progress = ((i / totalFrames) * 50).toFixed(1); // First 50%
                 exportProgress.style.width = progress + '%';
-                exportStatus.textContent = `Procesando frame ${i}/${totalFrames} (${progress}%)`;
+                exportStatus.textContent = `Renderizando frame ${i + 1}/${totalFrames}`;
 
-                // Give the browser a chance to breathe
-                await new Promise(r => setTimeout(r, 10));
+                // Yield to browser
+                if (i % 5 === 0) await new Promise(r => setTimeout(r, 0));
             }
 
-            // Stop recording
-            recorder.stop();
-
-            await new Promise((resolve) => {
-                recorder.onstop = resolve;
-            });
-
-            if (!exportCancelled) {
-                // Create download
-                const blob = new Blob(chunks, { type: mimeType });
-                const url = URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.download = `cinegrade-export-${Date.now()}.webm`;
-                link.href = url;
-                link.click();
-
-                exportStatus.textContent = 'Exportación completada.';
-                setTimeout(() => {
-                    URL.revokeObjectURL(url);
-                }, 5000);
-            } else {
+            if (exportCancelled) {
                 exportStatus.textContent = 'Exportación cancelada.';
+                setTimeout(() => exportModal.classList.add('hidden'), 1500);
+                return;
             }
+
+            // Step 2: Load FFmpeg and encode to MP4
+            exportStatus.textContent = 'Cargando encoder MP4...';
+            exportProgress.style.width = '50%';
+
+            const ffmpeg = await loadFFmpeg();
+
+            // Write frames to FFmpeg filesystem
+            exportStatus.textContent = 'Preparando frames para encoder...';
+            const { fetchFile } = FFmpegUtil;
+
+            for (let i = 0; i < frameBlobs.length; i++) {
+                const paddedNum = String(i).padStart(6, '0');
+                const arrayBuf = await frameBlobs[i].arrayBuffer();
+                await ffmpeg.writeFile(`frame_${paddedNum}.jpg`, new Uint8Array(arrayBuf));
+
+                if (i % 30 === 0) {
+                    const progress = (50 + (i / frameBlobs.length) * 20).toFixed(1);
+                    exportProgress.style.width = progress + '%';
+                    exportStatus.textContent = `Preparando frame ${i + 1}/${frameBlobs.length}...`;
+                }
+            }
+
+            // Step 3: Run FFmpeg to encode JPEG sequence → MP4
+            exportStatus.textContent = 'Codificando MP4 con H.264...';
+            exportProgress.style.width = '70%';
+
+            await ffmpeg.exec([
+                '-framerate', String(fps),
+                '-i', 'frame_%06d.jpg',
+                '-c:v', 'libx264',
+                '-pix_fmt', 'yuv420p',
+                '-crf', '18',           // High quality
+                '-preset', 'fast',
+                '-movflags', '+faststart',
+                '-y',
+                'output.mp4'
+            ]);
+
+            // Step 4: Read output and download
+            exportStatus.textContent = 'Descargando MP4...';
+            exportProgress.style.width = '95%';
+
+            const outputData = await ffmpeg.readFile('output.mp4');
+            const mp4Blob = new Blob([outputData.buffer], { type: 'video/mp4' });
+            const url = URL.createObjectURL(mp4Blob);
+
+            const link = document.createElement('a');
+            // Use original filename as base
+            const baseName = currentFile ? currentFile.name.replace(/\.[^.]+$/, '') : 'video';
+            link.download = `${baseName}_cinegrade.mp4`;
+            link.href = url;
+            link.click();
+
+            exportProgress.style.width = '100%';
+            exportStatus.textContent = 'MP4 exportado exitosamente.';
+
+            // Cleanup FFmpeg filesystem
+            for (let i = 0; i < frameBlobs.length; i++) {
+                const paddedNum = String(i).padStart(6, '0');
+                try { await ffmpeg.deleteFile(`frame_${paddedNum}.jpg`); } catch (_) {}
+            }
+            try { await ffmpeg.deleteFile('output.mp4'); } catch (_) {}
+
+            setTimeout(() => URL.revokeObjectURL(url), 10000);
+
         } catch (err) {
-            exportStatus.textContent = 'Error: ' + err.message;
+            console.error('Export error:', err);
+            exportStatus.textContent = 'Error de exportación: ' + err.message;
         }
 
-        // Close modal after a moment
         setTimeout(() => {
             exportModal.classList.add('hidden');
-        }, 2000);
+        }, 2500);
 
-        // Restore playback position
+        // Restore
         videoEl.currentTime = 0;
         renderFrame();
     }
 
     function seekTo(time) {
         return new Promise((resolve) => {
+            if (videoEl.currentTime === time) {
+                resolve();
+                return;
+            }
             videoEl.currentTime = time;
             videoEl.addEventListener('seeked', resolve, { once: true });
         });

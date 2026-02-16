@@ -35,17 +35,25 @@ const server = http.createServer((req, res) => {
     const ext = path.extname(fullPath).toLowerCase();
     const contentType = MIME_TYPES[ext] || 'application/octet-stream';
 
+    // Required headers for FFmpeg.wasm (SharedArrayBuffer)
+    const securityHeaders = {
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'require-corp',
+    };
+
     fs.readFile(fullPath, (err, data) => {
         if (err) {
             if (err.code === 'ENOENT') {
-                // SPA fallback: serve index.html
                 fs.readFile(path.join(__dirname, 'index.html'), (err2, indexData) => {
                     if (err2) {
                         res.writeHead(500);
                         res.end('Internal Server Error');
                         return;
                     }
-                    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                    res.writeHead(200, {
+                        'Content-Type': 'text/html; charset=utf-8',
+                        ...securityHeaders,
+                    });
                     res.end(indexData);
                 });
             } else {
@@ -58,6 +66,7 @@ const server = http.createServer((req, res) => {
         res.writeHead(200, {
             'Content-Type': contentType,
             'Cache-Control': 'public, max-age=3600',
+            ...securityHeaders,
         });
         res.end(data);
     });

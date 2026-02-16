@@ -623,10 +623,67 @@ input[type="range"].blue::-moz-range-thumb { background: #5080e0; }
     transition: width 0.3s;
 }
 
-#export-status {
+#export-status,
+#analysis-status {
     font-size: 13px;
     color: var(--text-secondary);
     margin-bottom: 16px;
+}
+
+/* Auto Grade */
+.auto-grade-section {
+    background: linear-gradient(135deg, rgba(224, 112, 32, 0.08), rgba(224, 112, 32, 0.02));
+}
+
+.btn-auto-grade {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    padding: 14px 20px;
+    background: linear-gradient(135deg, var(--accent), #d06010);
+    color: white;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s;
+    letter-spacing: 0.3px;
+}
+
+.btn-auto-grade:hover {
+    background: linear-gradient(135deg, var(--accent-hover), #e07020);
+    box-shadow: 0 0 30px var(--accent-glow);
+    transform: translateY(-1px);
+}
+
+.btn-auto-grade:active {
+    transform: translateY(0);
+}
+
+.btn-auto-grade.analyzing {
+    opacity: 0.7;
+    pointer-events: none;
+}
+
+.auto-grade-hint {
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 8px;
+}
+
+.auto-grade-result {
+    margin-top: 10px;
+    padding: 8px 12px;
+    background: var(--bg-tertiary);
+    border-radius: 6px;
+    border-left: 3px solid var(--success);
+    font-size: 12px;
+    color: var(--success);
+    text-align: center;
 }
 
 /* ===== Responsive ===== */
