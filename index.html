@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CineGrade — iPhone 15 Pro Max LOG Color Grading</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <span class="logo-icon">🎬</span>
+                <h1>CineGrade</h1>
+                <span class="badge">iPhone LOG → Cinema</span>
+            </div>
+        </header>
+
+        <!-- Main Layout -->
+        <div class="main-layout">
+            <!-- Upload Screen -->
+            <div id="upload-screen" class="upload-screen">
+                <div class="upload-zone" id="upload-zone">
+                    <div class="upload-icon">
+                        <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="17 8 12 3 7 8"/>
+                            <line x1="12" y1="3" x2="12" y2="15"/>
+                        </svg>
+                    </div>
+                    <h2>Arrastra tu video LOG aquí</h2>
+                    <p>o haz clic para seleccionar</p>
+                    <p class="upload-hint">Compatible con Apple Log, ProRes LOG · iPhone 15 Pro Max</p>
+                    <input type="file" id="file-input" accept="video/*" hidden>
+                </div>
+                <div class="demo-note">
+                    <p>Grabá en <strong>Ajustes → Cámara → Formatos → Apple ProRes → Log</strong></p>
+                </div>
+            </div>
+
+            <!-- Editor Screen -->
+            <div id="editor-screen" class="editor-screen hidden">
+                <!-- Video Preview Area -->
+                <div class="preview-area">
+                    <div class="preview-container">
+                        <!-- Before/After toggle -->
+                        <div class="preview-controls">
+                            <button id="btn-original" class="preview-btn active">Original LOG</button>
+                            <button id="btn-graded" class="preview-btn">Graded</button>
+                            <button id="btn-split" class="preview-btn">Split View</button>
+                        </div>
+
+                        <div class="video-wrapper">
+                            <video id="video-original" muted loop playsinline></video>
+                            <canvas id="canvas-graded"></canvas>
+                            <div id="split-line" class="split-line hidden">
+                                <div class="split-handle"></div>
+                            </div>
+                            <div id="split-label-left" class="split-label left hidden">LOG</div>
+                            <div id="split-label-right" class="split-label right hidden">CINE</div>
+                        </div>
+
+                        <!-- Playback Controls -->
+                        <div class="playback-controls">
+                            <button id="btn-play" class="play-btn">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                            </button>
+                            <div class="timeline">
+                                <input type="range" id="timeline-slider" min="0" max="100" value="0" step="0.1">
+                                <span id="time-display">0:00 / 0:00</span>
+                            </div>
+                            <button id="btn-fullscreen" class="control-btn" title="Pantalla completa">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Controls Sidebar -->
+                <div class="controls-sidebar">
+                    <!-- Presets Section -->
+                    <div class="control-section">
+                        <h3 class="section-title">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                            Presets Cinematográficos
+                        </h3>
+                        <div class="presets-grid" id="presets-grid">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+
+                    <!-- Input Profile -->
+                    <div class="control-section">
+                        <h3 class="section-title">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+                            Perfil de Entrada
+                        </h3>
+                        <div class="input-profile">
+                            <select id="log-profile">
+                                <option value="apple-log" selected>Apple Log (iPhone 15 Pro Max)</option>
+                                <option value="slog3">Sony S-Log3</option>
+                                <option value="clog3">Canon C-Log3</option>
+                                <option value="vlog">Panasonic V-Log</option>
+                                <option value="nlog">Nikon N-Log</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Primary Color Correction -->
+                    <div class="control-section">
+                        <h3 class="section-title">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 1 0 20"/></svg>
+                            Corrección Primaria
+                        </h3>
+
+                        <div class="control-group">
+                            <label>Exposición</label>
+                            <div class="slider-row">
+                                <input type="range" id="ctrl-exposure" min="-3" max="3" value="0" step="0.05" class="color-slider">
+                                <span class="slider-value" data-for="ctrl-exposure">0.00</span>
+                            </div>
+                        </div>
+
+                        <div class="control-group">
+                            <label>Contraste</label>
+                            <div class="slider-row">
+                                <input type="range" id="ctrl-contrast" min="0.5" max="2" value="1" step="0.01" class="color-slider">
+                                <span class="slider-value" data-for="ctrl-contrast">1.00</span>
+                            </div>
+                        </div>
+
+                        <div class="control-group">
+                            <label>Highlights</label>
+                            <div class="slider-row">
+                                <input type="range" id="ctrl-highlights" min="-1" max="1" value="0" step="0.01" class="color-slider">
+                                <span class="slider-value" data-for="ctrl-highlights">0.00</span>
+                            </div>
+                        </div>
+
+                        <div class="control-group">
+                            <label>Shadows</label>
+                            <div class="slider-row">
+                                <input type="range" id="ctrl-shadows" min="-1" max="1" value="0" step="0.01" class="color-slider">
+                                <span class="slider-value" data-for="ctrl-shadows">0.00</span>
+                            </div>
+                        </div>
+
+                        <div class="control-group">
+                            <label>Temperatura</label>
+                            <div class="slider-row">
+                                <input type="range" id="ctrl-temperature" min="-1" max="1" value="0" step="0.01" class="color-slider">
+                                <span class="slider-value" data-for="ctrl-temperature">0.00</span>
+                            </div>
+                        </div>
+
+                        <div class="control-group">
+                            <label>Tinte</label>
+                            <div class="slider-row">
+                                <input type="range" id="ctrl-tint" min="-1" max="1" value="0" step="0.01" class="color-slider">
+                                <span class="slider-value" data-for="ctrl-tint">0.00</span>
+                            </div>
+                        </div>
+
+                        <div class="control-group">
+                            <label>Saturación</label>
+                            <div class="slider-row">
+                                <input type="range" id="ctrl-saturation" min="0" max="2" value="1" step="0.01" class="color-slider">
+                                <span class="slider-value" data-for="ctrl-saturation">1.00</span>
+                            </div>
+                        </div>
+
+                        <div class="control-group">
+                            <label>Vibrance</label>
+                            <div class="slider-row">
+                                <input type="range" id="ctrl-vibrance" min="-1" max="1" value="0" step="0.01" class="color-slider">
+                                <span class="slider-value" data-for="ctrl-vibrance">0.00</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Lift / Gamma / Gain -->
+                    <div class="control-section">
+                        <h3 class="section-title">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                            Lift / Gamma / Gain
+                        </h3>
+
+                        <div class="lgg-group">
+                            <h4>Lift (Sombras)</h4>
+                            <div class="control-group">
+                                <label>R</label>
+                                <div class="slider-row">
+                                    <input type="range" id="ctrl-lift-r" min="-0.5" max="0.5" value="0" step="0.005" class="color-slider red">
+                                    <span class="slider-value" data-for="ctrl-lift-r">0.00</span>
+                                </div>
+                            </div>
+                            <div class="control-group">
+                                <label>G</label>
+                                <div class="slider-row">
+                                    <input type="range" id="ctrl-lift-g" min="-0.5" max="0.5" value="0" step="0.005" class="color-slider green">
+                                    <span class="slider-value" data-for="ctrl-lift-g">0.00</span>
+                                </div>
+                            </div>
+                            <div class="control-group">
+                                <label>B</label>
+                                <div class="slider-row">
+                                    <input type="range" id="ctrl-lift-b" min="-0.5" max="0.5" value="0" step="0.005" class="color-slider blue">
+                                    <span class="slider-value" data-for="ctrl-lift-b">0.00</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="lgg-group">
+                            <h4>Gamma (Medios)</h4>
+                            <div class="control-group">
+                                <label>R</label>
+                                <div class="slider-row">
+                                    <input type="range" id="ctrl-gamma-r" min="-0.5" max="0.5" value="0" step="0.005" class="color-slider red">
+                                    <span class="slider-value" data-for="ctrl-gamma-r">0.00</span>
+                                </div>
+                            </div>
+                            <div class="control-group">
+                                <label>G</label>
+                                <div class="slider-row">
+                                    <input type="range" id="ctrl-gamma-g" min="-0.5" max="0.5" value="0" step="0.005" class="color-slider green">
+                                    <span class="slider-value" data-for="ctrl-gamma-g">0.00</span>
+                                </div>
+                            </div>
+                            <div class="control-group">
+                                <label>B</label>
+                                <div class="slider-row">
+                                    <input type="range" id="ctrl-gamma-b" min="-0.5" max="0.5" value="0" step="0.005" class="color-slider blue">
+                                    <span class="slider-value" data-for="ctrl-gamma-b">0.00</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="lgg-group">
+                            <h4>Gain (Highlights)</h4>
+                            <div class="control-group">
+                                <label>R</label>
+                                <div class="slider-row">
+                                    <input type="range" id="ctrl-gain-r" min="0.5" max="2" value="1" step="0.005" class="color-slider red">
+                                    <span class="slider-value" data-for="ctrl-gain-r">1.00</span>
+                                </div>
+                            </div>
+                            <div class="control-group">
+                                <label>G</label>
+                                <div class="slider-row">
+                                    <input type="range" id="ctrl-gain-g" min="0.5" max="2" value="1" step="0.005" class="color-slider green">
+                                    <span class="slider-value" data-for="ctrl-gain-g">1.00</span>
+                                </div>
+                            </div>
+                            <div class="control-group">
+                                <label>B</label>
+                                <div class="slider-row">
+                                    <input type="range" id="ctrl-gain-b" min="0.5" max="2" value="1" step="0.005" class="color-slider blue">
+                                    <span class="slider-value" data-for="ctrl-gain-b">1.00</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Film Grain & Vignette -->
+                    <div class="control-section">
+                        <h3 class="section-title">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><polyline points="14 2 14 8 20 8"/></svg>
+                            Efectos Cinematográficos
+                        </h3>
+
+                        <div class="control-group">
+                            <label>Film Grain</label>
+                            <div class="slider-row">
+                                <input type="range" id="ctrl-grain" min="0" max="0.15" value="0" step="0.001" class="color-slider">
+                                <span class="slider-value" data-for="ctrl-grain">0.00</span>
+                            </div>
+                        </div>
+
+                        <div class="control-group">
+                            <label>Vignette</label>
+                            <div class="slider-row">
+                                <input type="range" id="ctrl-vignette" min="0" max="1" value="0" step="0.01" class="color-slider">
+                                <span class="slider-value" data-for="ctrl-vignette">0.00</span>
+                            </div>
+                        </div>
+
+                        <div class="control-group">
+                            <label>Halation</label>
+                            <div class="slider-row">
+                                <input type="range" id="ctrl-halation" min="0" max="1" value="0" step="0.01" class="color-slider">
+                                <span class="slider-value" data-for="ctrl-halation">0.00</span>
+                            </div>
+                        </div>
+
+                        <div class="control-group">
+                            <label>Fade / Blacks</label>
+                            <div class="slider-row">
+                                <input type="range" id="ctrl-fade" min="0" max="0.15" value="0" step="0.001" class="color-slider">
+                                <span class="slider-value" data-for="ctrl-fade">0.00</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Sharpening -->
+                    <div class="control-section">
+                        <h3 class="section-title">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                            Nitidez
+                        </h3>
+
+                        <div class="control-group">
+                            <label>Sharpen</label>
+                            <div class="slider-row">
+                                <input type="range" id="ctrl-sharpen" min="0" max="2" value="0" step="0.01" class="color-slider">
+                                <span class="slider-value" data-for="ctrl-sharpen">0.00</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div class="action-buttons">
+                        <button id="btn-reset" class="btn btn-secondary">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                            Resetear Todo
+                        </button>
+                        <button id="btn-export" class="btn btn-primary">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                            Exportar Video
+                        </button>
+                        <button id="btn-export-frame" class="btn btn-secondary">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                            Exportar Frame
+                        </button>
+                    </div>
+
+                    <!-- New Video -->
+                    <div class="action-buttons" style="margin-top: 8px;">
+                        <button id="btn-new-video" class="btn btn-secondary" style="width: 100%;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                            Nuevo Video
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Export Progress Modal -->
+        <div id="export-modal" class="modal hidden">
+            <div class="modal-content">
+                <h3>Exportando Video</h3>
+                <div class="progress-bar">
+                    <div id="export-progress" class="progress-fill"></div>
+                </div>
+                <p id="export-status">Procesando frames...</p>
+                <button id="btn-cancel-export" class="btn btn-secondary">Cancelar</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="color-engine.js"></script>
+    <script src="presets.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
