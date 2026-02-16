@@ -102,8 +102,9 @@
         const url = URL.createObjectURL(file);
         videoEl.src = url;
 
-        videoEl.addEventListener('loadedmetadata', function onMeta() {
-            videoEl.removeEventListener('loadedmetadata', onMeta);
+        // Wait until enough data is loaded to seek and read frames
+        videoEl.addEventListener('loadeddata', function onData() {
+            videoEl.removeEventListener('loadeddata', onData);
 
             // Initialize WebGL engine
             canvasEl.width = videoEl.videoWidth;
@@ -120,16 +121,12 @@
             uploadScreen.classList.add('hidden');
             editorScreen.classList.remove('hidden');
 
-            // Render first frame at position 0 without any grade yet
-            videoEl.currentTime = 0;
-            videoEl.addEventListener('seeked', function onSeek() {
-                videoEl.removeEventListener('seeked', onSeek);
-                // Auto-analyze immediately
-                runAutoGrade();
-            }, { once: true });
-
             // Update timeline
             timelineSlider.max = videoEl.duration || 100;
+
+            // Render first frame and then auto-analyze
+            renderFrame();
+            runAutoGrade();
         });
 
         videoEl.load();
@@ -707,12 +704,20 @@
 
     function seekTo(time) {
         return new Promise((resolve) => {
-            if (videoEl.currentTime === time) {
+            // If already at this time (within a small epsilon), resolve immediately
+            if (Math.abs(videoEl.currentTime - time) < 0.01) {
                 resolve();
                 return;
             }
+            const onSeeked = () => resolve();
+            videoEl.addEventListener('seeked', onSeeked, { once: true });
             videoEl.currentTime = time;
-            videoEl.addEventListener('seeked', resolve, { once: true });
+
+            // Safety timeout: if seeked never fires, resolve after 2s
+            setTimeout(() => {
+                videoEl.removeEventListener('seeked', onSeeked);
+                resolve();
+            }, 2000);
         });
     }
 

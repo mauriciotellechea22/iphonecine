@@ -53,8 +53,19 @@ class AutoAnalyzer {
 
     _seekTo(video, time) {
         return new Promise((resolve) => {
+            if (Math.abs(video.currentTime - time) < 0.01) {
+                resolve();
+                return;
+            }
+            const onSeeked = () => resolve();
+            video.addEventListener('seeked', onSeeked, { once: true });
             video.currentTime = time;
-            video.addEventListener('seeked', resolve, { once: true });
+
+            // Safety timeout
+            setTimeout(() => {
+                video.removeEventListener('seeked', onSeeked);
+                resolve();
+            }, 2000);
         });
     }
 
