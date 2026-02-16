@@ -1,0 +1,12 @@
+{
+  "name": "cinegrade",
+  "version": "1.0.0",
+  "description": "CineGrade — Cinematic color grading for iPhone LOG video",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
