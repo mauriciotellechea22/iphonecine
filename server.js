@@ -38,7 +38,7 @@ const server = http.createServer((req, res) => {
     // Required headers for FFmpeg.wasm (SharedArrayBuffer)
     const securityHeaders = {
         'Cross-Origin-Opener-Policy': 'same-origin',
-        'Cross-Origin-Embedder-Policy': 'require-corp',
+        'Cross-Origin-Embedder-Policy': 'credentialless',
     };
 
     fs.readFile(fullPath, (err, data) => {

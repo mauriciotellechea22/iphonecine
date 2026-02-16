@@ -513,7 +513,7 @@
     async function loadFFmpeg() {
         if (ffmpegLoaded && ffmpegInstance) return ffmpegInstance;
 
-        exportStatus.textContent = 'Cargando encoder MP4 (primera vez)...';
+        exportStatus.textContent = 'Cargando encoder MP4...';
 
         const { FFmpeg } = FFmpegWASM;
         const ffmpeg = new FFmpeg();
@@ -524,10 +524,17 @@
             exportStatus.textContent = `Codificando MP4... ${pct}%`;
         });
 
-        await ffmpeg.load({
+        // Load with a 30-second timeout to avoid hanging forever
+        const loadPromise = ffmpeg.load({
             coreURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
             wasmURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm',
         });
+
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('FFmpeg load timeout (30s)')), 30000)
+        );
+
+        await Promise.race([loadPromise, timeoutPromise]);
 
         ffmpegLoaded = true;
         ffmpegInstance = ffmpeg;
@@ -566,7 +573,7 @@
         exportCancelled = false;
         exportModal.classList.remove('hidden');
         exportProgress.style.width = '0%';
-        exportStatus.textContent = 'Preparando exportación MP4...';
+        exportStatus.textContent = 'Preparando exportación...';
 
         if (isPlaying) togglePlay();
 
@@ -576,18 +583,17 @@
         const frameInterval = 1 / fps;
         const width = videoEl.videoWidth;
         const height = videoEl.videoHeight;
+        const baseName = currentFile ? currentFile.name.replace(/\.[^.]+$/, '') : 'video';
 
         try {
-            // Step 1: Render all graded frames as PNGs into a WebM intermediary
+            // Step 1: Render all graded frames
             exportStatus.textContent = 'Renderizando frames gradeados...';
 
-            // Use a temporary canvas to read pixels
             const readCanvas = document.createElement('canvas');
             readCanvas.width = width;
             readCanvas.height = height;
             const readCtx = readCanvas.getContext('2d');
 
-            // Collect frames as blobs for FFmpeg
             const frameBlobs = [];
 
             for (let i = 0; i <= totalFrames; i++) {
@@ -596,24 +602,19 @@
                 const time = Math.min(i * frameInterval, duration);
                 await seekTo(time);
 
-                // Render graded frame on the WebGL canvas
                 engine.render(videoEl, 1, 0.5);
-
-                // Read from WebGL canvas to 2D canvas
                 readCtx.drawImage(canvasEl, 0, 0);
 
-                // Get as blob (JPEG for speed, high quality)
                 const blob = await new Promise(resolve => {
                     readCanvas.toBlob(resolve, 'image/jpeg', 0.95);
                 });
 
                 frameBlobs.push(blob);
 
-                const progress = ((i / totalFrames) * 50).toFixed(1); // First 50%
+                const progress = ((i / totalFrames) * 50).toFixed(1);
                 exportProgress.style.width = progress + '%';
                 exportStatus.textContent = `Renderizando frame ${i + 1}/${totalFrames}`;
 
-                // Yield to browser
                 if (i % 5 === 0) await new Promise(r => setTimeout(r, 0));
             }
 
@@ -623,70 +624,129 @@
                 return;
             }
 
-            // Step 2: Load FFmpeg and encode to MP4
-            exportStatus.textContent = 'Cargando encoder MP4...';
-            exportProgress.style.width = '50%';
+            // Step 2: Try FFmpeg MP4 encode, fall back to WebM if it fails
+            let useFFmpeg = true;
+            let ffmpeg = null;
 
-            const ffmpeg = await loadFFmpeg();
-
-            // Write frames to FFmpeg filesystem
-            exportStatus.textContent = 'Preparando frames para encoder...';
-            const { fetchFile } = FFmpegUtil;
-
-            for (let i = 0; i < frameBlobs.length; i++) {
-                const paddedNum = String(i).padStart(6, '0');
-                const arrayBuf = await frameBlobs[i].arrayBuffer();
-                await ffmpeg.writeFile(`frame_${paddedNum}.jpg`, new Uint8Array(arrayBuf));
-
-                if (i % 30 === 0) {
-                    const progress = (50 + (i / frameBlobs.length) * 20).toFixed(1);
-                    exportProgress.style.width = progress + '%';
-                    exportStatus.textContent = `Preparando frame ${i + 1}/${frameBlobs.length}...`;
-                }
+            try {
+                exportStatus.textContent = 'Cargando encoder MP4...';
+                exportProgress.style.width = '50%';
+                ffmpeg = await loadFFmpeg();
+            } catch (ffmpegErr) {
+                console.warn('FFmpeg not available, falling back to WebM:', ffmpegErr.message);
+                useFFmpeg = false;
             }
 
-            // Step 3: Run FFmpeg to encode JPEG sequence → MP4
-            exportStatus.textContent = 'Codificando MP4 con H.264...';
-            exportProgress.style.width = '70%';
+            if (useFFmpeg && ffmpeg) {
+                // === FFmpeg MP4 path ===
+                exportStatus.textContent = 'Preparando frames para encoder...';
 
-            await ffmpeg.exec([
-                '-framerate', String(fps),
-                '-i', 'frame_%06d.jpg',
-                '-c:v', 'libx264',
-                '-pix_fmt', 'yuv420p',
-                '-crf', '18',           // High quality
-                '-preset', 'fast',
-                '-movflags', '+faststart',
-                '-y',
-                'output.mp4'
-            ]);
+                for (let i = 0; i < frameBlobs.length; i++) {
+                    const paddedNum = String(i).padStart(6, '0');
+                    const arrayBuf = await frameBlobs[i].arrayBuffer();
+                    await ffmpeg.writeFile(`frame_${paddedNum}.jpg`, new Uint8Array(arrayBuf));
 
-            // Step 4: Read output and download
-            exportStatus.textContent = 'Descargando MP4...';
-            exportProgress.style.width = '95%';
+                    if (i % 30 === 0) {
+                        const progress = (50 + (i / frameBlobs.length) * 20).toFixed(1);
+                        exportProgress.style.width = progress + '%';
+                        exportStatus.textContent = `Preparando frame ${i + 1}/${frameBlobs.length}...`;
+                    }
+                }
 
-            const outputData = await ffmpeg.readFile('output.mp4');
-            const mp4Blob = new Blob([outputData.buffer], { type: 'video/mp4' });
-            const url = URL.createObjectURL(mp4Blob);
+                exportStatus.textContent = 'Codificando MP4 con H.264...';
+                exportProgress.style.width = '70%';
 
-            const link = document.createElement('a');
-            // Use original filename as base
-            const baseName = currentFile ? currentFile.name.replace(/\.[^.]+$/, '') : 'video';
-            link.download = `${baseName}_cinegrade.mp4`;
-            link.href = url;
-            link.click();
+                await ffmpeg.exec([
+                    '-framerate', String(fps),
+                    '-i', 'frame_%06d.jpg',
+                    '-c:v', 'libx264',
+                    '-pix_fmt', 'yuv420p',
+                    '-crf', '18',
+                    '-preset', 'fast',
+                    '-movflags', '+faststart',
+                    '-y',
+                    'output.mp4'
+                ]);
+
+                exportStatus.textContent = 'Descargando MP4...';
+                exportProgress.style.width = '95%';
+
+                const outputData = await ffmpeg.readFile('output.mp4');
+                const mp4Blob = new Blob([outputData.buffer], { type: 'video/mp4' });
+                const url = URL.createObjectURL(mp4Blob);
+
+                const link = document.createElement('a');
+                link.download = `${baseName}_cinegrade.mp4`;
+                link.href = url;
+                link.click();
+
+                // Cleanup
+                for (let i = 0; i < frameBlobs.length; i++) {
+                    const paddedNum = String(i).padStart(6, '0');
+                    try { await ffmpeg.deleteFile(`frame_${paddedNum}.jpg`); } catch (_) {}
+                }
+                try { await ffmpeg.deleteFile('output.mp4'); } catch (_) {}
+                setTimeout(() => URL.revokeObjectURL(url), 10000);
+
+            } else {
+                // === WebM fallback path using canvas + MediaRecorder ===
+                exportStatus.textContent = 'Codificando WebM...';
+                exportProgress.style.width = '55%';
+
+                // Create a 2D canvas for MediaRecorder (it can't record WebGL directly)
+                const recCanvas = document.createElement('canvas');
+                recCanvas.width = width;
+                recCanvas.height = height;
+                const recCtx = recCanvas.getContext('2d');
+
+                const stream = recCanvas.captureStream(0); // 0 = manual frame control
+                const recorder = new MediaRecorder(stream, {
+                    mimeType: 'video/webm;codecs=vp9',
+                    videoBitsPerSecond: 8000000, // 8 Mbps for quality
+                });
+
+                const chunks = [];
+                recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+
+                const recDone = new Promise(resolve => { recorder.onstop = resolve; });
+                recorder.start();
+
+                for (let i = 0; i < frameBlobs.length; i++) {
+                    // Draw each pre-rendered frame onto the recording canvas
+                    const img = await createImageBitmap(frameBlobs[i]);
+                    recCtx.drawImage(img, 0, 0);
+                    img.close();
+
+                    // Request a frame from the stream track
+                    const track = stream.getVideoTracks()[0];
+                    if (track.requestFrame) track.requestFrame();
+
+                    // Small delay to let MediaRecorder capture the frame
+                    await new Promise(r => setTimeout(r, 1000 / fps));
+
+                    if (i % 10 === 0) {
+                        const progress = (55 + (i / frameBlobs.length) * 40).toFixed(1);
+                        exportProgress.style.width = progress + '%';
+                        exportStatus.textContent = `Codificando WebM... ${Math.round((i / frameBlobs.length) * 100)}%`;
+                    }
+                }
+
+                recorder.stop();
+                await recDone;
+
+                const webmBlob = new Blob(chunks, { type: 'video/webm' });
+                const url = URL.createObjectURL(webmBlob);
+
+                const link = document.createElement('a');
+                link.download = `${baseName}_cinegrade.webm`;
+                link.href = url;
+                link.click();
+
+                setTimeout(() => URL.revokeObjectURL(url), 10000);
+            }
 
             exportProgress.style.width = '100%';
-            exportStatus.textContent = 'MP4 exportado exitosamente.';
-
-            // Cleanup FFmpeg filesystem
-            for (let i = 0; i < frameBlobs.length; i++) {
-                const paddedNum = String(i).padStart(6, '0');
-                try { await ffmpeg.deleteFile(`frame_${paddedNum}.jpg`); } catch (_) {}
-            }
-            try { await ffmpeg.deleteFile('output.mp4'); } catch (_) {}
-
-            setTimeout(() => URL.revokeObjectURL(url), 10000);
+            exportStatus.textContent = useFFmpeg ? 'MP4 exportado exitosamente.' : 'WebM exportado exitosamente.';
 
         } catch (err) {
             console.error('Export error:', err);
